@@ -13,6 +13,24 @@ function parseCsvAddresses(csv) {
     .filter((x) => x.length > 0);
 }
 
+async function verifyIfNeeded(address, args) {
+  try {
+    await hre.run("verify:verify", {
+      address,
+      constructorArguments: args,
+    });
+    console.log("  ✓ verified:", address);
+  } catch (e) {
+    const msg = e.message || "";
+    if (msg.includes("Already Verified") || msg.includes("already verified")) {
+      console.log("  ✓ already verified:", address);
+    } else {
+      console.log("  ⚠ verify failed:", address);
+      console.log("    reason:", msg);
+    }
+  }
+}
+
 async function main() {
   const [deployer] = await hre.ethers.getSigners();
   console.log("Deployer:", deployer.address);
@@ -168,6 +186,27 @@ async function main() {
   console.log("Config  :", await config.getAddress());
   console.log("Orders  :", await orders.getAddress());
   console.log("Escrow  :", await escrow.getAddress());
+
+  // ---------------------------------------
+  // 6) Verify contracts on BscScan Testnet
+  // ---------------------------------------
+  console.log("\nVerifying contracts on BscScan...");
+
+  await verifyIfNeeded(await admin.getAddress(), [deployer.address]);
+
+  await verifyIfNeeded(await config.getAddress(), [deployer.address, TREASURY]);
+
+  await verifyIfNeeded(await orders.getAddress(), [
+    deployer.address,
+    await admin.getAddress(),
+    await config.getAddress(),
+  ]);
+
+  await verifyIfNeeded(await escrow.getAddress(), [
+    await orders.getAddress(),
+    await admin.getAddress(),
+    await config.getAddress(),
+  ]);
 
   console.log("\nNext steps:");
   console.log(

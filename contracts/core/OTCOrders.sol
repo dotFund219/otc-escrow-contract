@@ -15,6 +15,10 @@ interface IERC20Like {
     ) external returns (bool);
 }
 
+interface IERC20Decimals {
+    function decimals() external view returns (uint8);
+}
+
 interface IAdminLike {
     function assertActiveUser(address user) external view;
 }
@@ -70,19 +74,26 @@ contract OTCOrders {
         escrow = _escrow;
     }
 
-    // Seller creates order: sell BTC/ETH, receive USDT/USDC
+    // ------------------------------------------------------------
+    // Order lifecycle
+    // ------------------------------------------------------------
+
     function createOrder(
         bytes32 sellAsset, // "BTC" or "ETH"
-        uint256 sellAmount, // in 1e18-based unit agreed by frontend
-        address quoteToken // USDT/USDC
+        uint256 sellAmount, // 1e18 units
+        address quoteToken // USDT / USDC (6 decimals)
     ) external returns (uint256 orderId) {
         IAdminLike(admin).assertActiveUser(msg.sender);
+
         if (sellAmount == 0) revert OTCErrors.InvalidAmount();
         if (!IConfigLike(config).allowedQuoteTokens(quoteToken))
             revert OTCErrors.InvalidToken();
 
-        // price lock at creation
-        uint256 quoteAmount = _calcQuoteAmount(sellAsset, sellAmount);
+        uint256 quoteAmount = _calcQuoteAmount(
+            sellAsset,
+            sellAmount,
+            quoteToken
+        );
 
         orderId = nextOrderId++;
 
@@ -92,7 +103,7 @@ contract OTCOrders {
             sellAsset: sellAsset,
             sellAmount: sellAmount,
             quoteToken: quoteToken,
-            quoteAmount: quoteAmount,
+            quoteAmount: quoteAmount, // ✅ token decimals (6)
             createdAt: block.timestamp,
             status: OTCEnums.OrderStatus.OPEN,
             takenTradeId: 0
@@ -118,14 +129,12 @@ contract OTCOrders {
         emit OrderCancelled(orderId);
     }
 
-    // Buyer accepts: deposit stable + fee to escrow, create trade
     function takeOrder(uint256 orderId) external returns (uint256 tradeId) {
         IAdminLike(admin).assertActiveUser(msg.sender);
 
         OTCStructs.Order storage o = orders[orderId];
         if (o.status != OTCEnums.OrderStatus.OPEN)
             revert OTCErrors.OrderNotOpen();
-        if (o.seller == address(0)) revert OTCErrors.InvalidAmount();
         if (msg.sender == o.seller) revert OTCErrors.InvalidAmount();
         if (o.takenTradeId != 0) revert OTCErrors.OrderAlreadyTaken();
         if (escrow == address(0)) revert("escrow not set");
@@ -133,7 +142,6 @@ contract OTCOrders {
         uint256 feeAmount = o.quoteAmount.bpsMul(IConfigLike(config).feeBps());
         uint256 total = o.quoteAmount + feeAmount;
 
-        // pull stable from buyer to escrow
         bool ok = IERC20Like(o.quoteToken).transferFrom(
             msg.sender,
             escrow,
@@ -156,36 +164,43 @@ contract OTCOrders {
         emit OrderTaken(orderId, tradeId, msg.sender);
     }
 
-    // -------------------------
-    // Pricing (Phase 1)
-    // -------------------------
+    // ------------------------------------------------------------
+    // Pricing (correct decimals handling)
+    // ------------------------------------------------------------
 
-    // QuoteAmount is stable token amount with 6 decimals usually,
-    // but we don't assume token decimals on-chain to keep MVP simple.
-    // Frontend should pass sellAmount in 1e18 units, and we output quoteAmount in 1e18 too,
-    // OR you can standardize to 1e6 offchain. For strictness, do the decimal normalization in backend/frontend.
-    //
-    // For MVP: quoteAmount = sellAmount * oraclePrice / 10^feedDecimals, then apply spreadBps.
+    /**
+     * sellAmount: 1e18
+     * oracle price: price * 10^feedDecimals (feedDecimals=8)
+     *
+     * Steps:
+     * 1) USD value in 1e18
+     * 2) Apply spread (bps)
+     * 3) Convert 1e18 USD value -> quoteToken decimals (USDT=6)
+     */
     function _calcQuoteAmount(
         bytes32 sellAsset,
-        uint256 sellAmount
+        uint256 sellAmount,
+        address quoteToken
     ) internal view returns (uint256) {
-        (uint256 p, uint8 d) = IConfigLike(config).getOraclePrice(sellAsset);
+        (uint256 price, uint8 feedDec) = IConfigLike(config).getOraclePrice(
+            sellAsset
+        );
 
-        // Base: sellAmount(1e18) * price(10^d) / 10^d = 1e18-scaled "USD"
-        uint256 base = (sellAmount * p) / (10 ** uint256(d));
-
-        // Placeholder for future: weightedAveragePrice(base) (currently 1:1)
-        uint256 weighted = _weightedAveragePrice(base);
+        // USD value, 1e18 scale
+        uint256 usdValue18 = (sellAmount * price) / (10 ** uint256(feedDec));
 
         // Apply spread
-        uint256 withSpread = weighted.bpsAdd(IConfigLike(config).spreadBps());
-        return withSpread;
-    }
+        uint256 withSpread = usdValue18.bpsAdd(IConfigLike(config).spreadBps());
 
-    function _weightedAveragePrice(
-        uint256 oraclePrice
-    ) internal pure returns (uint256) {
-        return oraclePrice; // Phase 1: 1:1
+        // Convert to token decimals
+        uint8 tokenDec = IERC20Decimals(quoteToken).decimals();
+
+        if (tokenDec == 18) {
+            return withSpread;
+        } else if (tokenDec < 18) {
+            return withSpread / (10 ** (18 - tokenDec));
+        } else {
+            return withSpread * (10 ** (tokenDec - 18));
+        }
     }
 }
