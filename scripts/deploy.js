@@ -46,6 +46,14 @@ async function main() {
     ? BigInt(process.env.WETH_PRICE)
     : 3000n;
 
+  const USDT_PRICE = process.env.USDT_PRICE
+    ? BigInt(process.env.USDT_PRICE)
+    : 1n;
+
+  const USDC_PRICE = process.env.USDC_PRICE
+    ? BigInt(process.env.USDC_PRICE)
+    : 1n;
+
   // Mint settings (human units)
   const mintToList = parseCsvAddresses(process.env.MINT_TO);
 
@@ -96,6 +104,12 @@ async function main() {
   const wethFeed = await MockV3.deploy(8, WETH_PRICE * 10n ** 8n);
   await wethFeed.waitForDeployment();
 
+  const usdtFeed = await MockV3.deploy(8, USDT_PRICE * 10n ** 8n); // $1.00
+  await usdtFeed.waitForDeployment();
+
+  const usdcFeed = await MockV3.deploy(8, USDC_PRICE * 10n ** 8n); // $1.00
+  await usdcFeed.waitForDeployment();
+
   console.log(
     "Mock WBTC/USD feed:",
     await wbtcFeed.getAddress(),
@@ -107,6 +121,18 @@ async function main() {
     await wethFeed.getAddress(),
     "price:",
     WETH_PRICE.toString(),
+  );
+  console.log(
+    "Mock USDT/USD feed:",
+    await usdtFeed.getAddress(),
+    "price:",
+    USDT_PRICE.toString(),
+  );
+  console.log(
+    "Mock USDC/USD feed:",
+    await usdcFeed.getAddress(),
+    "price:",
+    USDC_PRICE.toString(),
   );
 
   // ---------------------------------------
@@ -175,6 +201,20 @@ async function main() {
       true,
     )
   ).wait();
+  await (
+    await config.setAsset(
+      await usdt.getAddress(),
+      await usdtFeed.getAddress(),
+      true,
+    )
+  ).wait();
+  await (
+    await config.setAsset(
+      await usdc.getAddress(),
+      await usdcFeed.getAddress(),
+      true,
+    )
+  ).wait();
 
   // (Optional) If you want to manage stablecoins via price feeds as well,
   // add something like setAsset(USDT, usdtFeed, true) here.
@@ -217,6 +257,8 @@ async function main() {
   console.log("WETH    :", await weth.getAddress());
   console.log("WBTCFeed:", await wbtcFeed.getAddress());
   console.log("WETHFeed:", await wethFeed.getAddress());
+  console.log("USDTFeed:", await usdtFeed.getAddress());
+  console.log("USDCFeed:", await usdcFeed.getAddress());
   console.log("Admin   :", await admin.getAddress());
   console.log("Config  :", await config.getAddress());
   console.log("Orders  :", await orders.getAddress());
