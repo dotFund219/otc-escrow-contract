@@ -28,7 +28,7 @@ interface IConfigLike {
     function feeBps() external view returns (uint256);
     function spreadBps() external view returns (uint256);
     function getOraclePrice(
-        bytes32 symbol
+        address token
     ) external view returns (uint256 price, uint8 decimals_);
 }
 
@@ -46,7 +46,7 @@ contract OTCOrders {
     event OrderCreated(
         uint256 indexed orderId,
         address indexed seller,
-        bytes32 sellAsset,
+        address sellToken,
         uint256 sellAmount,
         address quoteToken,
         uint256 quoteAmount
@@ -79,7 +79,7 @@ contract OTCOrders {
     // ------------------------------------------------------------
 
     function createOrder(
-        bytes32 sellAsset, // "BTC" or "ETH"
+        address sellToken, // "WBTC" or "WETH" or "USDT" or "USDC"
         uint256 sellAmount, // 1e18 units
         address quoteToken // USDT / USDC (6 decimals)
     ) external returns (uint256 orderId) {
@@ -89,8 +89,13 @@ contract OTCOrders {
         if (!IConfigLike(config).allowedQuoteTokens(quoteToken))
             revert OTCErrors.InvalidToken();
 
+        if (!IConfigLike(config).allowedQuoteTokens(sellToken))
+            revert OTCErrors.InvalidToken();
+
+        require(sellToken != quoteToken, "buy=sell");
+
         uint256 quoteAmount = _calcQuoteAmount(
-            sellAsset,
+            sellToken,
             sellAmount,
             quoteToken
         );
@@ -100,7 +105,7 @@ contract OTCOrders {
         orders[orderId] = OTCStructs.Order({
             id: orderId,
             seller: msg.sender,
-            sellAsset: sellAsset,
+            sellAsset: sellToken,
             sellAmount: sellAmount,
             quoteToken: quoteToken,
             quoteAmount: quoteAmount, // ✅ token decimals (6)
@@ -112,7 +117,7 @@ contract OTCOrders {
         emit OrderCreated(
             orderId,
             msg.sender,
-            sellAsset,
+            sellToken,
             sellAmount,
             quoteToken,
             quoteAmount
@@ -153,6 +158,8 @@ contract OTCOrders {
             o.id,
             msg.sender,
             o.seller,
+            o.sellAsset,
+            o.sellAmount,
             o.quoteToken,
             o.quoteAmount,
             feeAmount
@@ -178,29 +185,56 @@ contract OTCOrders {
      * 3) Convert 1e18 USD value -> quoteToken decimals (USDT=6)
      */
     function _calcQuoteAmount(
-        bytes32 sellAsset,
+        address sellToken,
         uint256 sellAmount,
         address quoteToken
     ) internal view returns (uint256) {
-        (uint256 price, uint8 feedDec) = IConfigLike(config).getOraclePrice(
-            sellAsset
+        (uint256 sellPrice, uint8 sellFeedDec) = IConfigLike(config)
+            .getOraclePrice(sellToken);
+        (uint256 quotePrice, uint8 quoteFeedDec) = IConfigLike(config)
+            .getOraclePrice(quoteToken);
+
+        uint8 sellDec = IERC20Decimals(sellToken).decimals();
+        uint8 quoteDec = IERC20Decimals(quoteToken).decimals();
+
+        uint256 sellAmount18 = _to18(sellAmount, sellDec);
+
+        uint256 usdValue18 = (sellAmount18 * sellPrice) /
+            (10 ** uint256(sellFeedDec));
+
+        uint256 usdWithSpread = usdValue18.bpsAdd(
+            IConfigLike(config).spreadBps()
         );
 
-        // USD value, 1e18 scale
-        uint256 usdValue18 = (sellAmount * price) / (10 ** uint256(feedDec));
+        uint256 quoteAmount18 = (usdWithSpread *
+            (10 ** uint256(quoteFeedDec))) / quotePrice;
 
-        // Apply spread
-        uint256 withSpread = usdValue18.bpsAdd(IConfigLike(config).spreadBps());
+        return _from18(quoteAmount18, quoteDec);
+    }
 
-        // Convert to token decimals
-        uint8 tokenDec = IERC20Decimals(quoteToken).decimals();
-
-        if (tokenDec == 18) {
-            return withSpread;
-        } else if (tokenDec < 18) {
-            return withSpread / (10 ** (18 - tokenDec));
+    function _to18(
+        uint256 amount,
+        uint8 decimals
+    ) internal pure returns (uint256) {
+        if (decimals == 18) {
+            return amount;
+        } else if (decimals < 18) {
+            return amount * (10 ** (18 - decimals));
         } else {
-            return withSpread * (10 ** (tokenDec - 18));
+            return amount / (10 ** (decimals - 18));
+        }
+    }
+
+    function _from18(
+        uint256 amount,
+        uint8 decimals
+    ) internal pure returns (uint256) {
+        if (decimals == 18) {
+            return amount;
+        } else if (decimals < 18) {
+            return amount / (10 ** (18 - decimals));
+        } else {
+            return amount * (10 ** (decimals - 18));
         }
     }
 }

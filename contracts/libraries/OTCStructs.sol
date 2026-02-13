@@ -13,7 +13,7 @@ library OTCStructs {
     struct Order {
         uint256 id;
         address seller;
-        bytes32 sellAsset; // "BTC" / "ETH"
+        address sellAsset; // WETH/WBTC/USDT/USDC
         uint256 sellAmount; // in wei-like units decided by frontend convention (ETH wei). For BTC, also treat as 1e18-based unit offchain.
         address quoteToken; // USDT/USDC ERC20 address
         uint256 quoteAmount; // stable amount required (excluding fee), locked at creation
@@ -27,6 +27,8 @@ library OTCStructs {
         uint256 orderId;
         address buyer;
         address seller;
+        address sellToken;
+        uint256 sellAmount;
         address quoteToken;
         uint256 quoteAmount; // stable amount to seller
         uint256 feeAmount; // stable fee to treasury

@@ -15,13 +15,13 @@ contract OTCConfig {
     // spread in bps added on top of oracle price for quote calculation
     uint256 public spreadBps;
 
-    mapping(bytes32 => OTCStructs.AssetConfig) public assets; // "BTC","ETH" only in phase 1
-    mapping(address => bool) public allowedQuoteTokens; // USDT/USDC
+    mapping(address => OTCStructs.AssetConfig) public assets; // "WBTC","WETH", "USDT", "USDC" only in phase 1
+    mapping(address => bool) public allowedQuoteTokens; // "WBTC", "WETH", "USDT", "USDC" only in phase 1
 
     event TreasurySet(address indexed treasury);
     event FeeSet(uint256 feeBps);
     event SpreadSet(uint256 spreadBps);
-    event AssetSet(bytes32 indexed symbol, address feed, bool enabled);
+    event AssetSet(address indexed token, address feed, bool enabled);
     event QuoteTokenSet(address indexed token, bool allowed);
 
     constructor(address _owner, address _treasury) {
@@ -60,24 +60,24 @@ contract OTCConfig {
     }
 
     function setAsset(
-        bytes32 symbol,
+        address token,
         address feed,
         bool enabled
     ) external onlyOwner {
         require(feed != address(0), "zero feed");
         uint8 dec = IChainlinkAggregatorV3(feed).decimals();
-        assets[symbol] = OTCStructs.AssetConfig({
+        assets[token] = OTCStructs.AssetConfig({
             enabled: enabled,
             chainlinkFeed: feed,
             feedDecimals: dec
         });
-        emit AssetSet(symbol, feed, enabled);
+        emit AssetSet(token, feed, enabled);
     }
 
     function getOraclePrice(
-        bytes32 symbol
+        address token
     ) external view returns (uint256 price, uint8 decimals_) {
-        OTCStructs.AssetConfig memory cfg = assets[symbol];
+        OTCStructs.AssetConfig memory cfg = assets[token];
         if (!cfg.enabled) revert OTCErrors.UnsupportedAsset();
 
         (, int256 answer, , uint256 updatedAt, ) = IChainlinkAggregatorV3(

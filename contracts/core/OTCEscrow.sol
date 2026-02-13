@@ -48,6 +48,8 @@ contract OTCEscrow is IOTCEscrow {
         uint256 orderId,
         address buyer,
         address seller,
+        address sellToken,
+        uint256 sellAmount,
         address quoteToken,
         uint256 quoteAmount,
         uint256 feeAmount
@@ -62,6 +64,8 @@ contract OTCEscrow is IOTCEscrow {
             orderId: orderId,
             buyer: buyer,
             seller: seller,
+            sellToken: sellToken,
+            sellAmount: sellAmount,
             quoteToken: quoteToken,
             quoteAmount: quoteAmount,
             feeAmount: feeAmount,
